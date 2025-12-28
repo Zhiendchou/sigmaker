@@ -1,0 +1,80 @@
+name: Build IDA Plugin (DLL)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # 允许手动触发构建
+
+env:
+  # 请根据实际情况修改你的 .sln 文件路径
+  SOLUTION_FILE_PATH: .
+  
+  # 通常 IDA 插件编译为 Release 模式
+  BUILD_CONFIGURATION: Release
+  
+  # 目标平台: 通常是 x64 (用于 ida64.exe) 或者 x86 (用于 ida.exe)
+  # 如果你的 sln 里配置的是 'Win32' 请改为 'x86' 或 'Win32'
+  BUILD_PLATFORM: x64 
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive # 如果项目用了子模块（比如包含 SDK），这很重要
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    - name: Restore NuGet packages
+      run: nuget restore ${{ env.SOLUTION_FILE_PATH }}
+
+    # ------------------------------------------------------------------
+    # [关键步骤] IDA SDK 配置
+    # 如果项目报错找不到 <idasdk.h> 或找不到 .lib 文件，你需要解决 SDK 问题。
+    # 常见的开源项目解决方案是下载开源的 SDK stub 或者 headers。
+    # 下面是一个示例（默认注释掉），如果需要可以取消注释并修改：
+    # ------------------------------------------------------------------
+    # - name: Setup IDA SDK (Example)
+    #   run: |
+    #     git clone https://github.com/idapython/idasdk.git idasdk
+    #     echo "IDASDK=$(pwd)\idasdk" >> $env:GITHUB_ENV
+    #     echo "IDA_SDK=$(pwd)\idasdk" >> $env:GITHUB_ENV
+    
+    - name: Build Solution
+      run: |
+        msbuild /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ env.BUILD_PLATFORM }} ${{ env.SOLUTION_FILE_PATH }}
+      # 说明:
+      # /m: 多核编译
+      # /p:Configuration: 指定 Release
+      # /p:Platform: 指定 x64
+
+    - name: Locate Output Files
+      id: locate_artifacts
+      shell: pwsh
+      run: |
+        # 查找生成的 .dll 文件 (排除 obj 文件夹)
+        $dllPath = Get-ChildItem -Path . -Recurse -Filter "*.dll" | Where-Object { $_.FullName -notmatch "\\obj\\" } | Select-Object -First 1
+        if ($dllPath) {
+          echo "Found DLL: $($dllPath.FullName)"
+          echo "dll_path=$($dllPath.FullName)" >> $env:GITHUB_OUTPUT
+          echo "dll_name=$($dllPath.Name)" >> $env:GITHUB_OUTPUT
+        } else {
+          echo "No DLL found!"
+          exit 1
+        }
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Compiled-Plugin-${{ env.BUILD_PLATFORM }}
+        path: ${{ steps.locate_artifacts.outputs.dll_path }}
+        if-no-files-found: error
