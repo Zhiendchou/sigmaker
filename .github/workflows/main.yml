@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  SOLUTION_FILE_PATH: "IDA Pro SigMaker/IDA Pro SigMaker.sln" # 根据你的日志，sln似乎在子目录，请确认
+  SOLUTION_FILE_PATH: "IDA Pro SigMaker.sln" # 根据你的日志，sln似乎在子目录，请确认
   # 修正点：使用 sln 中实际存在的配置名称，注意保留双引号
   BUILD_CONFIGURATION: "IDA Plugin (64-Bit)"
   BUILD_PLATFORM: x64
