@@ -1,4 +1,4 @@
-name: Build SigMaker (DLL)
+name: Build IDA Pro SigMaker
 
 on:
   push:
@@ -7,66 +7,51 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
-env:
-  # 你的 .sln 路径
-  SOLUTION_FILE_PATH: "IDA Pro SigMaker.sln"
-  # 使用 sln 中实际存在的配置名称
-  BUILD_CONFIGURATION: "IDA Plugin (64-Bit)"
-  BUILD_PLATFORM: x64
-
 jobs:
-  build:
+  build-plugin:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      # 1. 检出插件源码
+      - name: Checkout Plugin Code
+        uses: actions/checkout@v4
 
-    # ------------------------------------------------------------------
-    # [新增步骤] 下载 IDA SDK
-    # 将 SDK clone 到项目期望的目录 "SDK"
-    # 项目设置里引用路径是 "..\SDK\include"，所以放在根目录即可
-    # ------------------------------------------------------------------
-    - name: Setup IDA SDK
-      run: |
-        git clone https://github.com/shefben/ida_sdk_91 SDK
+      # 2. 检出 IDA SDK 到 SDK 目录
+      # 注意：根据日志，项目期望 SDK 在 "SDK" 文件夹中，而不是 "idasdk9"
+      - name: Checkout IDA SDK
+        uses: actions/checkout@v4
+        with:
+          repository: shefben/ida_sdk_91
+          path: SDK
 
-    - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v2
+      # 3. 配置 MSBuild 环境
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
-    - name: Setup NuGet
-      uses: NuGet/setup-nuget@v2
+      # 4. [关键修复] 自动修补 Main.cpp 以适配 IDA 9 SDK
+      # 错误原因: 'bin_search3' 在 IDA 9 中被移除，需替换为 'bin_search' 且参数顺序不同。
+      # 旧: bin_search3(&idx, start, end, pats, flags)
+      # 新: bin_search(start, end, pats, flags, &idx)
+      - name: Patch Main.cpp for IDA 9
+        shell: bash
+        run: |
+          echo "Patching bin_search3 to bin_search in Main.cpp..."
+          # 使用正则调整参数顺序 (将第一个参数移到最后)
+          sed -i -E 's/bin_search3\s*\(\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)/bin_search(\2, \3, \4, \5, \1)/g' "IDA Pro SigMaker/Main.cpp"
+          
+          # 打印包含 bin_search 的行以确认修改成功
+          grep "bin_search" "IDA Pro SigMaker/Main.cpp" || echo "Patch might have failed or line looks different."
 
-    - name: Restore NuGet packages
-      run: nuget restore "${{ env.SOLUTION_FILE_PATH }}"
+      # 5. 运行 MSBuild 编译
+      - name: Build Solution
+        run: msbuild /m /p:Configuration="IDA Plugin (64-Bit)" /p:Platform=x64 "IDA Pro SigMaker.sln"
 
-    - name: Build Solution
-      # Configuration 名称包含空格，必须加引号
-      run: |
-        msbuild /m /p:Configuration="${{ env.BUILD_CONFIGURATION }}" /p:Platform=${{ env.BUILD_PLATFORM }} "${{ env.SOLUTION_FILE_PATH }}"
-
-    - name: Locate Output Files
-      id: locate_artifacts
-      shell: pwsh
-      run: |
-        # 查找生成的 .dll (通常在 x64/IDA Plugin (64-Bit)/ 下)
-        # 排除 obj 文件夹防止误报
-        $dllPath = Get-ChildItem -Path . -Recurse -Filter "*.dll" | Where-Object { $_.FullName -notmatch "\\obj\\" } | Select-Object -First 1
-        
-        if ($dllPath) {
-          echo "Found DLL: $($dllPath.FullName)"
-          echo "dll_path=$($dllPath.FullName)" >> $env:GITHUB_OUTPUT
-          echo "dll_name=$($dllPath.Name)" >> $env:GITHUB_OUTPUT
-        } else {
-          Write-Error "No DLL found! Build might have failed silently or output path is unusual."
-          exit 1
-        }
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: SigMaker-Plugin-x64
-        path: ${{ steps.locate_artifacts.outputs.dll_path }}
-        if-no-files-found: error
+      # 6. 上传生成的 DLL
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IDA_Pro_SigMaker_Plugin
+          path: |
+            **/*.dll
+            **/*.pdb
+          if-no-files-found: error
